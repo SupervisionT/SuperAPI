@@ -22,7 +22,8 @@ public class Main extends Application<Configuration> {
     @Override
     public void run(Configuration configuration,
                     Environment environment) {
-
+        environment.jersey().setUrlPattern("/api/*");
+        environment.jersey().register(new Operations());
 
     }
 

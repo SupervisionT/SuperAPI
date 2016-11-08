@@ -1,6 +1,8 @@
 apply plugin: "java"
 apply plugin: "application"
 apply plugin: 'com.github.johnrengelman.shadow'
+apply plugin: 'org.hidetake.ssh'
+
 
 buildscript {
     repositories {
@@ -25,6 +27,16 @@ ext {
     LOCAL_CONFIG_FILE = "$CONFIG_DIR/local_config.yml"
     LOCAL_APP_BIN_PATH = "$project.buildDir/libs/$APP_BIN_NAME"
     MAIN_CLASS = "Main"
+
+    PROD_IP = "139.59.152.221"
+    PROD_USER="root"
+    PROD_KEY_PATH = project.hasProperty("identity") ? project.property("identity") : ""
+    APP_IDENTIFIER = project.hasProperty("app_id") ? project.property("app_id") : ""
+    REMOTE_DEPLOY_FOLDER_ROOT = "/opt/superapi"
+    LOCAL_PROD_CONFIG_PATH = "$CONFIG_DIR/production_config.yml"
+    CONFIG_NAME = "production_config.yml"
+    REMOTE_CONFIG_DEPLOY_PATH = "$REMOTE_DEPLOY_FOLDER_ROOT/$CONFIG_NAME"
+    REMOTE_APP_DEPLOY_PATH = "$REMOTE_DEPLOY_FOLDER_ROOT/$APP_BIN_NAME"
 
     properties.each { prop ->
         println prop
@@ -80,3 +92,63 @@ runShadow {
     args 'server', LOCAL_CONFIG_FILE
 }
 
+remotes {
+    digitalocean {
+        host = PROD_IP
+        user = PROD_USER
+        if (!PROD_KEY_PATH.isEmpty()) {
+            identity = file(PROD_KEY_PATH)
+        }
+    }
+
+}
+
+
+task deployAPI << {
+
+    ssh.settings {
+        knownHosts = allowAnyHosts
+    }
+
+    ssh.run {
+
+        if (remotes.digitalocean.identity == null) {
+            throw new GradleException("Need to provide ssh identity to use")
+        }
+
+        if (APP_IDENTIFIER.isEmpty()) {
+            throw new GradleException("Need to provide app identifier")
+        }
+
+        session(remotes.digitalocean) {
+            println "Killing existing process if it exists"
+            def killAPI = "tmux kill-session -t $APP_IDENTIFIER"
+            println killAPI
+            execute(killAPI, ignoreError: true)
+
+            println "Creating deployment directory : $REMOTE_DEPLOY_FOLDER_ROOT"
+            execute("mkdir -p $REMOTE_DEPLOY_FOLDER_ROOT")
+
+            println "Uploading prod build and config"
+            put from: LOCAL_APP_BIN_PATH, into: REMOTE_APP_DEPLOY_PATH
+            put from: LOCAL_PROD_CONFIG_PATH, into: REMOTE_CONFIG_DEPLOY_PATH
+
+            println "Starting new version"
+
+            def startAPI = "tmux new -A -s $APP_IDENTIFIER -d " +
+                    "java " +
+                    "-jar $REMOTE_APP_DEPLOY_PATH server $REMOTE_CONFIG_DEPLOY_PATH"
+            println startAPI
+            execute(startAPI)
+
+            //Check for healthcheck in a loop
+            sleep(3000)
+            println "Starting healthchecks"
+            execute("ps -fC tmux | grep $APP_IDENTIFIER")
+            println "Found process"
+            execute("wget -O - --retry-connrefused --tries=10 http://127.0.0.1:8081/ping > /dev/null")
+            println "Pong received"
+        }
+
+    }
+}
