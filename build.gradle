@@ -137,6 +137,9 @@ task deployAPI << {
 
             def startAPI = "tmux new -A -s $APP_IDENTIFIER -d " +
                     "java " +
+                    "-Dnewrelic.config.app_name='$APP_NAME-all;$APP_NAME-$APP_IDENTIFIER' " +
+                    "-Dnewrelic.environment=production  " +
+                    "-javaagent:/opt/newrelic/newrelic.jar " +
                     "-jar $REMOTE_APP_DEPLOY_PATH server $REMOTE_CONFIG_DEPLOY_PATH"
             println startAPI
             execute(startAPI)
